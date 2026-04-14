@@ -94,11 +94,13 @@ class SpellingGameProcessor(FrameProcessor):
         self,
         session_id: str = "",
         user_id: int | None = None,
+        spelling_speed: SpellingSpeed = SpellingSpeed.NORMAL,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._session_id = session_id
         self._user_id = user_id
+        self._spelling_speed = spelling_speed
         self._words: list[dict] = random.sample(WORD_LIST, WORDS_PER_GAME)
         self._word_index: int = 0
         self._score: int = 0
@@ -129,6 +131,15 @@ class SpellingGameProcessor(FrameProcessor):
         BotStoppedSpeakingFrame and a false WAITING_FOR_SPELLING transition.
         """
         self._advance_to_next_word()
+        try:
+            from db.repositories import GameSessionRepository
+            GameSessionRepository().create_session(
+                session_id=self._session_id,
+                user_id=self._user_id,
+                spelling_speed=self._spelling_speed.value,
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to create game session: {exc}")
         return (
             f"Welcome to Spell Bee — "
             f"word 1 is {self._current_word}, as in: {self._current_sentence}."
@@ -244,6 +255,18 @@ class SpellingGameProcessor(FrameProcessor):
             "correct": is_correct,
         })
 
+        try:
+            from db.repositories import SpellingAttemptRepository
+            SpellingAttemptRepository().log_attempt(
+                session_id=self._session_id,
+                user_id=self._user_id,
+                word=correct_word,
+                attempt=attempt,
+                correct=is_correct,
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to log spelling attempt: {exc}")
+
         self._phase = GamePhase.BETWEEN_WORDS
 
         if self._word_index < WORDS_PER_GAME:
@@ -256,6 +279,7 @@ class SpellingGameProcessor(FrameProcessor):
             )
         else:
             self._phase = GamePhase.GAME_OVER
+            self._finalize_session()
             response = (
                 f"{feedback} — "
                 f"game over, you scored {self._score} out of {WORDS_PER_GAME}."
@@ -271,6 +295,20 @@ class SpellingGameProcessor(FrameProcessor):
     async def _handle_repeat(self) -> None:
         """User asked to hear the current word again during the spelling phase."""
         logger.info(f"[GAME] Repeat requested for '{self._current_word}'")
+
+        try:
+            from db.repositories import SpellingAttemptRepository
+            SpellingAttemptRepository().log_attempt(
+                session_id=self._session_id,
+                user_id=self._user_id,
+                word=self._current_word.lower(),
+                attempt="[repeat]",
+                correct=False,
+                command_type="repeat",
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to log repeat: {exc}")
+
         # Transition to BETWEEN_WORDS so BotStoppedSpeakingFrame will
         # correctly transition back to WAITING_FOR_SPELLING afterwards.
         self._phase = GamePhase.BETWEEN_WORDS
@@ -293,6 +331,19 @@ class SpellingGameProcessor(FrameProcessor):
             "correct": False,
         })
 
+        try:
+            from db.repositories import SpellingAttemptRepository
+            SpellingAttemptRepository().log_attempt(
+                session_id=self._session_id,
+                user_id=self._user_id,
+                word=correct_word,
+                attempt="[skipped]",
+                correct=False,
+                command_type="skip",
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to log skip attempt: {exc}")
+
         self._phase = GamePhase.BETWEEN_WORDS
 
         if self._word_index < WORDS_PER_GAME:
@@ -305,6 +356,7 @@ class SpellingGameProcessor(FrameProcessor):
             )
         else:
             self._phase = GamePhase.GAME_OVER
+            self._finalize_session()
             response = (
                 f"No problem — {correct_word} is spelled {spaced} — "
                 f"game over, you scored {self._score} out of {WORDS_PER_GAME}."
@@ -319,7 +371,22 @@ class SpellingGameProcessor(FrameProcessor):
         logger.info(
             f"[GAME] User quit after {words_attempted} words, score={self._score}"
         )
+
+        try:
+            from db.repositories import SpellingAttemptRepository
+            SpellingAttemptRepository().log_attempt(
+                session_id=self._session_id,
+                user_id=self._user_id,
+                word=self._current_word.lower(),
+                attempt="[quit]",
+                correct=False,
+                command_type="quit",
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to log quit: {exc}")
+
         self._phase = GamePhase.GAME_OVER
+        self._finalize_session()
         response = (
             f"Ending the game — you scored {self._score} "
             f"out of {words_attempted} words attempted."
@@ -366,6 +433,18 @@ class SpellingGameProcessor(FrameProcessor):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _finalize_session(self) -> None:
+        """Persist end-of-game stats to game_sessions."""
+        try:
+            from db.repositories import GameSessionRepository
+            GameSessionRepository().end_session(
+                session_id=self._session_id,
+                total_words=len(self._history),
+                correct_count=self._score,
+            )
+        except Exception as exc:
+            logger.error(f"[GAME] Failed to finalize session: {exc}")
 
     def _advance_to_next_word(self) -> None:
         entry = self._words[self._word_index]

@@ -52,10 +52,6 @@ _QUIT_TRIGGERS: frozenset[str] = frozenset({
     "end",
     "exit",
     "stop",
-    "end game",
-    "stop game",
-    "quit game",
-    "i want to quit",
     "i want to stop",
 })
 

@@ -17,13 +17,14 @@ logger.add(sys.stderr, level="DEBUG")
 from auth import create_token, decode_token, hash_password, verify_password  # noqa: E402
 from constants import DEFAULT_SPEED, VAD_STOP_SECS, SpellingSpeed  # noqa: E402
 from db.database import init_all_tables  # noqa: E402
-from db.repositories import UserRepository  # noqa: E402
+from db.repositories import MetricsRepository, UserRepository  # noqa: E402
 from pipeline import run_bot  # noqa: E402
 from schemas import (  # noqa: E402
     AuthResponse,
     ConnectResponse,
     LoginRequest,
     LogRequest,
+    MetricsResponse,
     SignupRequest,
     UpdateSpeedRequest,
     UserProfile,
@@ -80,36 +81,7 @@ async def _verify_tts_credentials() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Auth endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/auth/signup", response_model=AuthResponse, status_code=201)
-async def signup(req: SignupRequest):
-    repo = UserRepository()
-    if repo.find_by_username(req.username):
-        raise HTTPException(status_code=409, detail="Username already taken")
-    hashed = hash_password(req.password)
-    user_id = repo.create(req.username, hashed, req.spelling_speed.value)
-    token = create_token(user_id)
-    return AuthResponse(token=token, username=req.username, spelling_speed=req.spelling_speed)
-
-
-@app.post("/auth/login", response_model=AuthResponse)
-async def login(req: LoginRequest):
-    repo = UserRepository()
-    row = repo.find_by_username(req.username)
-    if not row or not verify_password(req.password, row["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    token = create_token(row["id"])
-    return AuthResponse(
-        token=token,
-        username=row["username"],
-        spelling_speed=SpellingSpeed(row["spelling_speed"]),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Profile endpoints  (JWT passed as Authorization: Bearer <token>)
+# Auth helpers
 # ---------------------------------------------------------------------------
 
 def _get_user_id_from_header(request: Request) -> int:
@@ -123,6 +95,54 @@ def _get_user_id_from_header(request: Request) -> int:
     return user_id
 
 
+def _require_admin(request: Request) -> int:
+    """Decode JWT → DB lookup → verify is_admin. Returns user_id or raises 403."""
+    user_id = _get_user_id_from_header(request)
+    row = UserRepository().find_by_id(user_id)
+    if not row or not row["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user_id
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/auth/signup", response_model=AuthResponse, status_code=201)
+async def signup(req: SignupRequest):
+    repo = UserRepository()
+    if repo.find_by_username(req.username):
+        raise HTTPException(status_code=409, detail="Username already taken")
+    hashed = hash_password(req.password)
+    user_id = repo.create(req.username, hashed, req.spelling_speed.value)
+    token = create_token(user_id)
+    return AuthResponse(
+        token=token,
+        username=req.username,
+        spelling_speed=req.spelling_speed,
+        is_admin=False,
+    )
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(req: LoginRequest):
+    repo = UserRepository()
+    row = repo.find_by_username(req.username)
+    if not row or not verify_password(req.password, row["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_token(row["id"])
+    return AuthResponse(
+        token=token,
+        username=row["username"],
+        spelling_speed=SpellingSpeed(row["spelling_speed"]),
+        is_admin=bool(row["is_admin"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Profile endpoints  (JWT passed as Authorization: Bearer <token>)
+# ---------------------------------------------------------------------------
+
 @app.get("/profile", response_model=UserProfile)
 async def get_profile(request: Request):
     user_id = _get_user_id_from_header(request)
@@ -133,6 +153,7 @@ async def get_profile(request: Request):
         id=row["id"],
         username=row["username"],
         spelling_speed=SpellingSpeed(row["spelling_speed"]),
+        is_admin=bool(row["is_admin"]),
     )
 
 
@@ -141,6 +162,17 @@ async def update_speed(req: UpdateSpeedRequest, request: Request):
     user_id = _get_user_id_from_header(request)
     UserRepository().update_speed(user_id, req.spelling_speed.value)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/metrics", response_model=MetricsResponse)
+async def get_metrics(request: Request):
+    _require_admin(request)
+    data = MetricsRepository().get_metrics()
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +241,7 @@ async def websocket_endpoint(
             session_id=session_id,
             stop_secs=stop_secs,
             user_id=user_id,
+            spelling_speed=speed,
         )
     except Exception as e:
         logger.error(f"Bot error session={session_id}: {e}")

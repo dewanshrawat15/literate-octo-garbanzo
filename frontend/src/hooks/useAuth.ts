@@ -94,5 +94,38 @@ export function useAuth() {
     setError(null);
   }, []);
 
-  return { user, error, loading, signup, login, logout };
+  const updateSpeed = useCallback(
+    async (speed: SpellingSpeed): Promise<boolean> => {
+      if (!user) return false;
+      setError(null);
+      setLoading(true);
+      try {
+        const res = await fetch(`${BACKEND_URL}/profile/speed`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${user.token}`,
+          },
+          body: JSON.stringify({ spelling_speed: speed }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setError(body?.detail ?? "Failed to update speed");
+          return false;
+        }
+        const updated = { ...user, spelling_speed: speed };
+        saveUser(updated);
+        setUser(updated);
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Network error");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [user]
+  );
+
+  return { user, error, loading, signup, login, logout, updateSpeed };
 }

@@ -14,11 +14,28 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_all_tables() -> None:
-    """Create all application tables if they do not already exist."""
-    from db.models import UNHANDLED_INTERRUPTIONS_DDL, USERS_DDL
+    """Create all application tables and run schema migrations idempotently."""
+    from db.models import (
+        GAME_SESSIONS_DDL,
+        IS_ADMIN_MIGRATION,
+        SPELLING_ATTEMPTS_DDL,
+        UNHANDLED_INTERRUPTIONS_DDL,
+        USERS_DDL,
+    )
 
     with get_connection() as conn:
         conn.execute(USERS_DDL)
         conn.execute(UNHANDLED_INTERRUPTIONS_DDL)
+        conn.execute(GAME_SESSIONS_DDL)
+        conn.execute(SPELLING_ATTEMPTS_DDL)
+
+        # Migration: add is_admin column — OperationalError means it already exists.
+        try:
+            conn.execute(IS_ADMIN_MIGRATION)
+            logger.info("[DB] Migration: is_admin column added to users")
+        except sqlite3.OperationalError:
+            logger.debug("[DB] is_admin column already exists — skipping migration")
+
         conn.commit()
+
     logger.info(f"[DB] Tables initialised at {DB_PATH}")

@@ -20,6 +20,7 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
+from constants import SpellingSpeed
 from game_processor import SpellingGameProcessor
 
 load_dotenv()
@@ -45,6 +46,7 @@ async def run_bot(
     session_id: str = "",
     stop_secs: float = 1.8,
     user_id: int | None = None,
+    spelling_speed: SpellingSpeed = SpellingSpeed.NORMAL,
 ) -> None:
     """Build and run the Pipecat pipeline for one WebSocket session.
 
@@ -61,6 +63,8 @@ async def run_bot(
         defaults to 1.8 (NORMAL speed).
     user_id:
         Authenticated user's DB id; None for anonymous sessions.
+    spelling_speed:
+        Resolved SpellingSpeed enum value; stored in game_sessions for metrics.
     """
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
@@ -109,6 +113,7 @@ async def run_bot(
     game_processor = SpellingGameProcessor(
         session_id=session_id,
         user_id=user_id,
+        spelling_speed=spelling_speed,
     )
 
     pipeline = Pipeline([

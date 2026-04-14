@@ -32,4 +32,43 @@ export interface UserProfile {
   token: string;
   username: string;
   spelling_speed: SpellingSpeed;
+  is_admin: boolean;
+}
+
+export interface SpellingStats {
+  total_attempts: number;
+  correct: number;
+  incorrect: number;
+  accuracy_pct: number;
+}
+
+export interface HardWord {
+  word: string;
+  attempts: number;
+  correct_count: number;
+  accuracy_pct: number;
+}
+
+export interface CommandUsage {
+  repeat: number;
+  skip: number;
+  quit: number;
+}
+
+export interface TopUnhandled {
+  raw_text: string;
+  cnt: number;
+}
+
+export interface MetricsData {
+  speed_distribution: Record<string, number>;
+  total_users: number;
+  total_sessions: number;
+  completed_sessions: number;
+  spelling_stats: SpellingStats;
+  top_hard_words: HardWord[];
+  command_usage: CommandUsage;
+  unhandled_count: number;
+  top_unhandled: TopUnhandled[];
+  avg_score_pct: number | null;
 }

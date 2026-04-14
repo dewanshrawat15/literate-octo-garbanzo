@@ -3,21 +3,36 @@ interface Props {
   isConnecting: boolean;
   error: string | null;
   username?: string;
+  isAdmin?: boolean;
   onLogout?: () => void;
+  onGoToProfile?: () => void;
+  onGoToMetrics?: () => void;
 }
 
-export function StartScreen({ onStart, isConnecting, error, username, onLogout }: Props) {
+export function StartScreen({ onStart, isConnecting, error, username, isAdmin, onLogout, onGoToProfile, onGoToMetrics }: Props) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
         {username && (
           <div className="flex items-center justify-between mb-4 text-sm text-gray-500">
             <span>Hi, <span className="font-medium text-gray-700">{username}</span></span>
-            {onLogout && (
-              <button onClick={onLogout} className="text-indigo-600 hover:underline">
-                Sign out
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {onGoToProfile && (
+                <button onClick={onGoToProfile} className="text-indigo-600 hover:underline">
+                  My Profile
+                </button>
+              )}
+              {isAdmin && onGoToMetrics && (
+                <button onClick={onGoToMetrics} className="text-purple-600 hover:underline">
+                  Admin Metrics
+                </button>
+              )}
+              {onLogout && (
+                <button onClick={onLogout} className="text-gray-500 hover:underline">
+                  Sign out
+                </button>
+              )}
+            </div>
           </div>
         )}
         <div className="text-6xl mb-4">🐝</div>
