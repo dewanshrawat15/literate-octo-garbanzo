@@ -9,10 +9,10 @@ import pytest_asyncio
 
 from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
-    InterruptionFrame,
     TextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
 )
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
@@ -376,7 +376,7 @@ async def test_interruption_during_between_words_sets_flag():
 
     await run_test(
         p,
-        frames_to_send=[InterruptionFrame()],
+        frames_to_send=[VADUserStartedSpeakingFrame()],
         send_end_frame=True,
     )
 
@@ -391,7 +391,7 @@ async def test_interruption_triggers_repeat_announcement():
     down, _ = await run_test(
         p,
         frames_to_send=[
-            InterruptionFrame(),         # user interrupts
+            VADUserStartedSpeakingFrame(),         # user interrupts
             BotStoppedSpeakingFrame(),   # bot stops after interruption
         ],
         send_end_frame=True,
@@ -414,7 +414,7 @@ async def test_after_repeat_bot_stopped_transitions_to_waiting():
     await run_test(
         p,
         frames_to_send=[
-            InterruptionFrame(),
+            VADUserStartedSpeakingFrame(),
             BotStoppedSpeakingFrame(),   # after interrupt → triggers repeat
         ],
         send_end_frame=True,
@@ -439,8 +439,81 @@ async def test_interruption_during_waiting_does_not_set_flag():
 
     await run_test(
         p,
-        frames_to_send=[InterruptionFrame()],
+        frames_to_send=[VADUserStartedSpeakingFrame()],
         send_end_frame=True,
     )
 
     assert p._interrupted is False
+
+
+# ---------------------------------------------------------------------------
+# Quit / skip commands honoured during BETWEEN_WORDS
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_quit_during_between_words_ends_game():
+    """Saying 'quit' while the bot is speaking must end the game immediately."""
+    p = make_processor()
+    p.get_intro_text()  # phase = BETWEEN_WORDS
+
+    down, _ = await run_test(
+        p,
+        frames_to_send=[TranscriptionFrame(text="quit", user_id="user", timestamp="")],
+        send_end_frame=True,
+    )
+
+    assert p._phase == GamePhase.GAME_OVER
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 1
+    assert "game" in tts_frames[0].text.lower() or "score" in tts_frames[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_between_words_ends_game():
+    """'stop' is a synonym for quit and must also end the game."""
+    p = make_processor()
+    p.get_intro_text()  # phase = BETWEEN_WORDS
+
+    down, _ = await run_test(
+        p,
+        frames_to_send=[TranscriptionFrame(text="stop", user_id="user", timestamp="")],
+        send_end_frame=True,
+    )
+
+    assert p._phase == GamePhase.GAME_OVER
+
+
+@pytest.mark.asyncio
+async def test_skip_during_between_words_advances_word():
+    """Saying 'skip' while the bot is speaking skips the current word."""
+    p = make_processor()
+    p.get_intro_text()  # word = "cat", phase = BETWEEN_WORDS
+    first_word = p._current_word
+
+    down, _ = await run_test(
+        p,
+        frames_to_send=[TranscriptionFrame(text="skip", user_id="user", timestamp="")],
+        send_end_frame=True,
+    )
+
+    # Word should have advanced (skipped)
+    assert p._current_word != first_word or p._phase == GamePhase.GAME_OVER
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 1
+    assert first_word in tts_frames[0].text.lower()  # correct spelling revealed
+
+
+@pytest.mark.asyncio
+async def test_spelling_during_between_words_dropped():
+    """Spelling attempts during BETWEEN_WORDS must still be dropped (only commands pass)."""
+    p = make_processor()
+    p.get_intro_text()  # word = "cat", phase = BETWEEN_WORDS
+
+    await run_test(
+        p,
+        frames_to_send=[TranscriptionFrame(text="c a t", user_id="user", timestamp="")],
+        send_end_frame=True,
+    )
+
+    assert p._phase == GamePhase.BETWEEN_WORDS
+    assert p._score == 0  # not evaluated

@@ -32,6 +32,7 @@ from pipecat.frames.frames import (
     TextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
@@ -161,9 +162,13 @@ class SpellingGameProcessor(FrameProcessor):
             )
 
         # ------------------------------------------------------------------
-        # InterruptionFrame: user spoke while bot was announcing a word.
+        # VADUserStartedSpeakingFrame: user spoke while bot was announcing.
+        # This is the frame Pipecat actually generates (not InterruptionFrame,
+        # which only appears when an LLM aggregator is in the pipeline).
+        # We set _interrupted and push InterruptionFrame downstream ourselves
+        # to cancel in-progress TTS and trigger BotStoppedSpeakingFrame.
         # ------------------------------------------------------------------
-        if isinstance(frame, InterruptionFrame):
+        if isinstance(frame, VADUserStartedSpeakingFrame):
             if (
                 self._phase == GamePhase.BETWEEN_WORDS
                 and self._current_word
@@ -171,6 +176,7 @@ class SpellingGameProcessor(FrameProcessor):
             ):
                 logger.info(f"User interrupted '{self._current_word}' — will repeat")
                 self._interrupted = True
+                await self.push_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
             await self.push_frame(frame, direction)
             return
 
@@ -201,11 +207,28 @@ class SpellingGameProcessor(FrameProcessor):
 
         # ------------------------------------------------------------------
         # TranscriptionFrame: user spelled/said something.
-        # Only accepted when phase is WAITING_FOR_SPELLING.
+        # Primary window is WAITING_FOR_SPELLING, but quit/skip are honoured
+        # even during BETWEEN_WORDS — those are intent-to-exit signals that
+        # should not be dropped just because the bot happens to be speaking.
         # ------------------------------------------------------------------
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             if self._phase == GamePhase.WAITING_FOR_SPELLING:
                 await self._handle_spelling_attempt(frame.text)
+            elif self._phase == GamePhase.BETWEEN_WORDS and self._current_word:
+                intent = classify_input(frame.text)
+                if intent in ("quit_command", "skip_command"):
+                    logger.info(
+                        f"[GAME] {intent} received during BETWEEN_WORDS — "
+                        f"cancelling TTS and honouring command"
+                    )
+                    self._interrupted = False
+                    self._repeating = False
+                    # Cancel any in-progress TTS (repeat or initial announcement)
+                    await self.push_frame(InterruptionFrame(), FrameDirection.DOWNSTREAM)
+                    if intent == "quit_command":
+                        await self._handle_quit()
+                    else:
+                        await self._handle_skip()
             return
 
         await self.push_frame(frame, direction)
