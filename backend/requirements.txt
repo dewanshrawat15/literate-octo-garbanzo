@@ -1,0 +1,5 @@
+pipecat-ai[deepgram,cartesia,silero,websocket]>=0.0.108
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.0
+loguru>=0.7.0
