@@ -12,12 +12,14 @@ from pipecat.frames.frames import (
     InterruptionFrame,
     TextFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
 )
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 from pipecat.tests.utils import run_test
 
-from bot import GamePhase, SpellingGameProcessor
+from constants import GamePhase
+from game_processor import SpellingGameProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +134,9 @@ async def test_transcription_blocked_during_between_words():
         send_end_frame=True,
     )
 
-    # No TextFrame should be pushed (attempt was dropped)
-    text_frames = [f for f in down if isinstance(f, TextFrame)]
-    assert len(text_frames) == 0
+    # No feedback frame should be pushed (attempt was dropped)
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 0
     # Score unchanged
     assert p._score == 0
 
@@ -153,8 +155,8 @@ async def test_transcription_accepted_after_bot_stops():
         send_end_frame=True,
     )
 
-    text_frames = [f for f in down if isinstance(f, TextFrame)]
-    assert len(text_frames) == 1, "A feedback TextFrame should be pushed"
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 1, "A feedback TTSSpeakFrame should be pushed"
     assert p._score == 1
 
 
@@ -250,9 +252,9 @@ async def test_response_text_frame_pushed_downstream():
         send_end_frame=True,
     )
 
-    text_frames = [f for f in down if isinstance(f, TextFrame)]
-    assert len(text_frames) == 1
-    assert "dog" in text_frames[0].text.lower(), "Next word should be in response"
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 1
+    assert "dog" in tts_frames[0].text.lower(), "Next word should be in response"
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +400,9 @@ async def test_interruption_triggers_repeat_announcement():
     # Bot should re-announce, not open spelling window
     assert p._phase == GamePhase.BETWEEN_WORDS, "Phase must stay BETWEEN_WORDS during repeat"
     assert p._interrupted is False, "_interrupted flag must be cleared after repeat"
-    text_frames = [f for f in down if isinstance(f, TextFrame)]
-    assert len(text_frames) == 1
-    assert "repeat" in text_frames[0].text.lower() or "cat" in text_frames[0].text.lower()
+    tts_frames = [f for f in down if isinstance(f, TTSSpeakFrame)]
+    assert len(tts_frames) == 1
+    assert "repeat" in tts_frames[0].text.lower() or "cat" in tts_frames[0].text.lower()
 
 
 @pytest.mark.asyncio

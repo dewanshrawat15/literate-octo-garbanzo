@@ -1,7 +1,9 @@
 import os
 import sys
+import uuid
+
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from loguru import logger
@@ -12,15 +14,42 @@ load_dotenv()
 logger.remove()
 logger.add(sys.stderr, level="DEBUG")
 
-from bot import run_bot  # noqa: E402
+from auth import create_token, decode_token, hash_password, verify_password  # noqa: E402
+from constants import DEFAULT_SPEED, VAD_STOP_SECS, SpellingSpeed  # noqa: E402
+from db.database import init_all_tables  # noqa: E402
+from db.repositories import UserRepository  # noqa: E402
+from pipeline import run_bot  # noqa: E402
+from schemas import (  # noqa: E402
+    AuthResponse,
+    ConnectResponse,
+    LoginRequest,
+    LogRequest,
+    SignupRequest,
+    UpdateSpeedRequest,
+    UserProfile,
+)
 
 app = FastAPI(title="Spell Bee Voice Bot")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.on_event("startup")
-async def verify_tts_credentials():
+async def startup():
+    """Initialise DB tables and verify third-party credentials at boot."""
+    init_all_tables()
+    await _verify_tts_credentials()
+
+
+async def _verify_tts_credentials() -> None:
     """Hit Cartesia directly with the configured API key + voice_id so a bad
-    credential/voice surfaces as a loud error at boot — instead of silently
+    credential/voice surfaces as a loud error at boot rather than silently
     failing inside the pipeline WebSocket."""
     import httpx
 
@@ -41,7 +70,7 @@ async def verify_tts_credentials():
                 },
             )
         if r.status_code == 200:
-            logger.info(f"[STARTUP] Cartesia OK — voice exists: {r.json().get('name')!r}")
+            logger.info(f"[STARTUP] Cartesia OK — voice: {r.json().get('name')!r}")
         else:
             logger.error(
                 f"[STARTUP] Cartesia check FAILED status={r.status_code} body={r.text[:400]}"
@@ -49,44 +78,140 @@ async def verify_tts_credentials():
     except Exception as e:
         logger.exception(f"[STARTUP] Cartesia check exception: {e}")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/auth/signup", response_model=AuthResponse, status_code=201)
+async def signup(req: SignupRequest):
+    repo = UserRepository()
+    if repo.find_by_username(req.username):
+        raise HTTPException(status_code=409, detail="Username already taken")
+    hashed = hash_password(req.password)
+    user_id = repo.create(req.username, hashed, req.spelling_speed.value)
+    token = create_token(user_id)
+    return AuthResponse(token=token, username=req.username, spelling_speed=req.spelling_speed)
 
 
-@app.get("/connect")
-async def connect():
-    """Frontend calls this to get the WebSocket URL before connecting."""
-    host = os.getenv("HOST", "localhost")
-    port = os.getenv("PORT", "8000")
-    ws_host = "localhost" if host == "0.0.0.0" else host
-    return {"wsUrl": f"ws://{ws_host}:{port}/ws"}
+@app.post("/auth/login", response_model=AuthResponse)
+async def login(req: LoginRequest):
+    repo = UserRepository()
+    row = repo.find_by_username(req.username)
+    if not row or not verify_password(req.password, row["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_token(row["id"])
+    return AuthResponse(
+        token=token,
+        username=row["username"],
+        spelling_speed=SpellingSpeed(row["spelling_speed"]),
+    )
 
 
-@app.post("/log")
-async def client_log(req: Request):
-    """Diagnostic endpoint — frontend POSTs JSON events so we can correlate
-    browser-side behavior with backend logs."""
-    try:
-        body = await req.json()
-    except Exception:
-        body = {"raw": "unparseable"}
-    logger.info(f"[FRONTEND] {body}")
+# ---------------------------------------------------------------------------
+# Profile endpoints  (JWT passed as Authorization: Bearer <token>)
+# ---------------------------------------------------------------------------
+
+def _get_user_id_from_header(request: Request) -> int:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = auth[len("Bearer "):]
+    user_id = decode_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user_id
+
+
+@app.get("/profile", response_model=UserProfile)
+async def get_profile(request: Request):
+    user_id = _get_user_id_from_header(request)
+    row = UserRepository().find_by_id(user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserProfile(
+        id=row["id"],
+        username=row["username"],
+        spelling_speed=SpellingSpeed(row["spelling_speed"]),
+    )
+
+
+@app.patch("/profile/speed")
+async def update_speed(req: UpdateSpeedRequest, request: Request):
+    user_id = _get_user_id_from_header(request)
+    UserRepository().update_speed(user_id, req.spelling_speed.value)
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Game connection
+# ---------------------------------------------------------------------------
+
+@app.get("/connect", response_model=ConnectResponse)
+async def connect(token: str = Query(default="anonymous")):
+    """Return the WebSocket URL. The token is echoed as a query param so that
+    the authenticated user's speed preference can be resolved when /ws is hit."""
+    host = os.getenv("HOST", "localhost")
+    port = os.getenv("PORT", "8000")
+    ws_host = "localhost" if host == "0.0.0.0" else host
+    return ConnectResponse(wsUrl=f"ws://{ws_host}:{port}/ws?token={token}")
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic logging
+# ---------------------------------------------------------------------------
+
+@app.post("/log")
+async def client_log(req: LogRequest):
+    """Diagnostic endpoint — frontend POSTs JSON events so we can correlate
+    browser-side behaviour with backend logs."""
+    logger.info(f"[FRONTEND] {req.model_dump()}")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
+def _resolve_user(token: str) -> tuple[int | None, SpellingSpeed]:
+    """Decode the JWT and look up the user's speed preference.
+
+    Returns (user_id, SpellingSpeed). Falls back to (None, NORMAL) for
+    anonymous or invalid tokens.
+    """
+    if token in ("anonymous", ""):
+        return None, DEFAULT_SPEED
+    user_id = decode_token(token)
+    if user_id is None:
+        return None, DEFAULT_SPEED
+    row = UserRepository().find_by_id(user_id)
+    if not row:
+        return None, DEFAULT_SPEED
+    return user_id, SpellingSpeed(row["spelling_speed"])
+
+
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str = Query(default="anonymous"),
+):
     await websocket.accept()
-    logger.info("WebSocket connection accepted")
+    session_id = str(uuid.uuid4())
+    user_id, speed = _resolve_user(token)
+    stop_secs = VAD_STOP_SECS[speed]
+    logger.info(
+        f"WebSocket accepted session={session_id} user={user_id} "
+        f"speed={speed.value} stop_secs={stop_secs}"
+    )
     try:
-        await run_bot(websocket)
+        await run_bot(
+            websocket,
+            session_id=session_id,
+            stop_secs=stop_secs,
+            user_id=user_id,
+        )
     except Exception as e:
-        logger.error(f"Bot error: {e}")
+        logger.error(f"Bot error session={session_id}: {e}")
 
 
 if __name__ == "__main__":

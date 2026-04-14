@@ -4,7 +4,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from bot import normalize_spelling
+from game_processor import normalize_spelling
 
 
 def test_letters_spaced():

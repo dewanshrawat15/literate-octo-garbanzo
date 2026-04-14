@@ -25,3 +25,11 @@ export interface TransportStatus {
   botSpeaking: boolean;
   userSpeaking: boolean;
 }
+
+export type SpellingSpeed = "slow" | "normal" | "fast";
+
+export interface UserProfile {
+  token: string;
+  username: string;
+  spelling_speed: SpellingSpeed;
+}

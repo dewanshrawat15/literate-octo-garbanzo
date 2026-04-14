@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StatusIndicator } from "../../components/StatusIndicator";
-import type { GamePhase, TransportStatus } from "../../types";
+import type { TransportStatus } from "../../types";
 
 function makeTransport(overrides: Partial<TransportStatus> = {}): TransportStatus {
   return { status: "connected", botSpeaking: false, userSpeaking: false, ...overrides };

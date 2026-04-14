@@ -2,12 +2,24 @@ interface Props {
   onStart: () => void;
   isConnecting: boolean;
   error: string | null;
+  username?: string;
+  onLogout?: () => void;
 }
 
-export function StartScreen({ onStart, isConnecting, error }: Props) {
+export function StartScreen({ onStart, isConnecting, error, username, onLogout }: Props) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
+        {username && (
+          <div className="flex items-center justify-between mb-4 text-sm text-gray-500">
+            <span>Hi, <span className="font-medium text-gray-700">{username}</span></span>
+            {onLogout && (
+              <button onClick={onLogout} className="text-indigo-600 hover:underline">
+                Sign out
+              </button>
+            )}
+          </div>
+        )}
         <div className="text-6xl mb-4">🐝</div>
         <h1 className="text-4xl font-bold text-indigo-700 mb-2">Spell Bee</h1>
         <p className="text-gray-500 mb-8 text-lg">

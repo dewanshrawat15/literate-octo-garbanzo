@@ -39,14 +39,15 @@ export function useSpellBeeClient() {
   const [transport, setTransport] = useState<TransportStatus>(initialTransport);
   const [error, setError] = useState<string | null>(null);
 
-  const startGame = useCallback(async () => {
+  const startGame = useCallback(async (token: string = "anonymous") => {
     diag("startGame.begin");
     setError(null);
     setTransport((t) => ({ ...t, status: "connecting" }));
     setGameState((g) => ({ ...g, phase: "connecting" }));
 
     try {
-      const res = await fetch(`${BACKEND_URL}/connect`);
+      // Pass the JWT token so the backend can look up the user's speed preference.
+      const res = await fetch(`${BACKEND_URL}/connect?token=${encodeURIComponent(token)}`);
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
       const { wsUrl } = await res.json();
       diag("connect.fetched", { wsUrl });
