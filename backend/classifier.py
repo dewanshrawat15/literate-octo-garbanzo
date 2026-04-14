@@ -90,17 +90,19 @@ def classify_input(text: str) -> InputClass:
     # ── Multi-word: check trigger sets ──────────────────────────────────────────
     phrase = " ".join(tokens)
 
-    for trigger in _REPEAT_TRIGGERS:
-        if phrase == trigger or phrase.startswith(trigger + " "):
-            return "repeat_command"
+    # Priority: quit > skip > repeat (quit is highest-intent and must not be
+    # shadowed by a skip trigger that happens to appear in the same phrase).
+    for trigger in _QUIT_TRIGGERS:
+        if trigger in phrase:
+            return "quit_command"
 
     for trigger in _SKIP_TRIGGERS:
         if trigger in phrase:
             return "skip_command"
 
-    for trigger in _QUIT_TRIGGERS:
-        if trigger in phrase:
-            return "quit_command"
+    for trigger in _REPEAT_TRIGGERS:
+        if phrase == trigger or phrase.startswith(trigger + " "):
+            return "repeat_command"
 
     # Multi-word, no command match → out-of-scope question or statement
     return "question"

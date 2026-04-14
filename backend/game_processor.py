@@ -39,6 +39,7 @@ from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 from classifier import classify_input
 from constants import GamePhase, SpellingSpeed
+from db.repositories import GameSessionRepository, SpellingAttemptRepository, TelemetryRepository
 from word_list import WORD_LIST, WORDS_PER_GAME
 
 
@@ -74,15 +75,6 @@ def normalize_spelling(text: str) -> str:
         return longest.lower()
 
     return "".join(tokens).lower()
-
-
-def _ordinal(n: int) -> str:
-    """Return the ordinal string for a positive integer (1 → 'first', etc.)."""
-    _MAP = {
-        1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
-        6: "sixth", 7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth",
-    }
-    return _MAP.get(n, str(n))
 
 
 # ---------------------------------------------------------------------------
@@ -132,15 +124,11 @@ class SpellingGameProcessor(FrameProcessor):
         BotStoppedSpeakingFrame and a false WAITING_FOR_SPELLING transition.
         """
         self._advance_to_next_word()
-        try:
-            from db.repositories import GameSessionRepository
-            GameSessionRepository().create_session(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                spelling_speed=self._spelling_speed.value,
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to create game session: {exc}")
+        GameSessionRepository().create_session(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            spelling_speed=self._spelling_speed.value,
+        )
         return (
             f"Welcome to Spell Bee — "
             f"word 1 is {self._current_word}, as in: {self._current_sentence}."
@@ -278,17 +266,13 @@ class SpellingGameProcessor(FrameProcessor):
             "correct": is_correct,
         })
 
-        try:
-            from db.repositories import SpellingAttemptRepository
-            SpellingAttemptRepository().log_attempt(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                word=correct_word,
-                attempt=attempt,
-                correct=is_correct,
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to log spelling attempt: {exc}")
+        SpellingAttemptRepository().log_attempt(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            word=correct_word,
+            attempt=attempt,
+            correct=is_correct,
+        )
 
         self._phase = GamePhase.BETWEEN_WORDS
 
@@ -319,18 +303,14 @@ class SpellingGameProcessor(FrameProcessor):
         """User asked to hear the current word again during the spelling phase."""
         logger.info(f"[GAME] Repeat requested for '{self._current_word}'")
 
-        try:
-            from db.repositories import SpellingAttemptRepository
-            SpellingAttemptRepository().log_attempt(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                word=self._current_word.lower(),
-                attempt="[repeat]",
-                correct=False,
-                command_type="repeat",
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to log repeat: {exc}")
+        SpellingAttemptRepository().log_attempt(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            word=self._current_word.lower(),
+            attempt="[repeat]",
+            correct=False,
+            command_type="repeat",
+        )
 
         # Transition to BETWEEN_WORDS so BotStoppedSpeakingFrame will
         # correctly transition back to WAITING_FOR_SPELLING afterwards.
@@ -354,18 +334,14 @@ class SpellingGameProcessor(FrameProcessor):
             "correct": False,
         })
 
-        try:
-            from db.repositories import SpellingAttemptRepository
-            SpellingAttemptRepository().log_attempt(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                word=correct_word,
-                attempt="[skipped]",
-                correct=False,
-                command_type="skip",
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to log skip attempt: {exc}")
+        SpellingAttemptRepository().log_attempt(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            word=correct_word,
+            attempt="[skipped]",
+            correct=False,
+            command_type="skip",
+        )
 
         self._phase = GamePhase.BETWEEN_WORDS
 
@@ -395,18 +371,14 @@ class SpellingGameProcessor(FrameProcessor):
             f"[GAME] User quit after {words_attempted} words, score={self._score}"
         )
 
-        try:
-            from db.repositories import SpellingAttemptRepository
-            SpellingAttemptRepository().log_attempt(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                word=self._current_word.lower(),
-                attempt="[quit]",
-                correct=False,
-                command_type="quit",
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to log quit: {exc}")
+        SpellingAttemptRepository().log_attempt(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            word=self._current_word.lower(),
+            attempt="[quit]",
+            correct=False,
+            command_type="quit",
+        )
 
         self._phase = GamePhase.GAME_OVER
         self._finalize_session()
@@ -428,18 +400,14 @@ class SpellingGameProcessor(FrameProcessor):
             f"[GAME] Unrecognized input phase={self._phase} raw='{raw_text}'"
         )
 
-        try:
-            from db.repositories import TelemetryRepository
-            TelemetryRepository().log_unhandled(
-                session_id=self._session_id,
-                user_id=self._user_id,
-                raw_text=raw_text,
-                normalized=normalized,
-                phase=str(self._phase.value),
-                current_word=self._current_word,
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Telemetry write failed: {exc}")
+        TelemetryRepository().log_unhandled(
+            session_id=self._session_id,
+            user_id=self._user_id,
+            raw_text=raw_text,
+            normalized=normalized,
+            phase=str(self._phase.value),
+            current_word=self._current_word,
+        )
 
         # Temporarily switch to BETWEEN_WORDS so the BotStoppedSpeakingFrame
         # handler transitions back to WAITING_FOR_SPELLING after the deflection
@@ -459,15 +427,11 @@ class SpellingGameProcessor(FrameProcessor):
 
     def _finalize_session(self) -> None:
         """Persist end-of-game stats to game_sessions."""
-        try:
-            from db.repositories import GameSessionRepository
-            GameSessionRepository().end_session(
-                session_id=self._session_id,
-                total_words=len(self._history),
-                correct_count=self._score,
-            )
-        except Exception as exc:
-            logger.error(f"[GAME] Failed to finalize session: {exc}")
+        GameSessionRepository().end_session(
+            session_id=self._session_id,
+            total_words=len(self._history),
+            correct_count=self._score,
+        )
 
     def _advance_to_next_word(self) -> None:
         entry = self._words[self._word_index]
