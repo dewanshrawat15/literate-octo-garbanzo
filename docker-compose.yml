@@ -1,0 +1,42 @@
+services:
+
+  # ── Backend (FastAPI + Pipecat) ──────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DB_PATH: "/app/data/spelling_bee.db"
+    volumes:
+      # Persist the SQLite database across container rebuilds
+      - ./backend/data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Frontend (React + Vite → nginx) ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Passed to Vite at build time so the JS bundle knows the backend URL.
+        # If you expose the backend behind a reverse proxy or a domain name,
+        # update this to match (e.g. https://api.myapp.com).
+        VITE_BACKEND_URL: "http://localhost:8000"
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
