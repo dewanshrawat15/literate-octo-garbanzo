@@ -4,6 +4,14 @@ A real-time, voice-driven Spelling Bee game powered by a Python FastAPI backend 
 
 ---
 
+## Demo
+
+https://github.com/dewanshrawat15/literate-octo-garbanzo/raw/main/demo.mp4
+
+> Full walkthrough: signup → game session → spelling attempts → end screen.
+
+---
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
